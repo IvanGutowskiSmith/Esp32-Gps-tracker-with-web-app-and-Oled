@@ -156,13 +156,35 @@ void handleRoot() {
   page += "<h1>Help me return home</h1>";
   page += "Hi there! I'm a lost space potato; please use the distance readout to carry me back home. Thank you, kind soul!</p>";
   page += "<div id=\"gpsData\"></div>";
+
+  // Add button to toggle WiFi
+  page += "<button onclick=\"toggleWiFi()\">Toggle WiFi</button>";
+
+  // JavaScript function to toggle WiFi
   page += "<script>";
-  page += "function updateGPSData() {fetch('/gps').then(response => response.json()).then(data => {";
+  page += "function toggleWiFi() {";
+  page += "fetch('/toggleWiFi').then(response => {";
+  page += "if (response.ok) {";
+  page += "console.log('WiFi toggled successfully');";
+  page += "} else {";
+  page += "console.error('Error toggling WiFi');";
+  page += "}";
+  page += "});";
+  page += "}";
+  page += "</script>";
+
+  // JavaScript to fetch and display GPS data
+  page += "<script>";
+  page += "function updateGPSData() {";
+  page += "fetch('/gps').then(response => response.json()).then(data => {";
   page += "const gpsDataDiv = document.getElementById('gpsData');";
-  page += "gpsDataDiv.innerHTML = `<p><b>Distance to Home:</b><br>${Math.round(data.gps.distanceToHome)} meters</p><p><b>Direction between current GPS location and home:</b> ${data.gps.direction}</p>Current latitude:<br>${data.gps.latitude}</p><p>Current longitude:<br>${data.gps.longitude}</p><p>Satellites: ${data.gps.satellites}</p>`;});}";
+  page += "gpsDataDiv.innerHTML = `<p><b>Distance to Home:</b><br>${Math.round(data.gps.distanceToHome)} meters</p><p><b>Direction between current GPS location and home:</b> ${data.gps.direction}</p>Current latitude:<br>${data.gps.latitude}</p><p>Current longitude:<br>${data.gps.longitude}</p><p>Satellites: ${data.gps.satellites}</p>`;";
+  page += "});";
+  page += "}";
   page += "setInterval(updateGPSData, 2000);";
   page += "window.onload = function() {updateGPSData();};";
   page += "</script>";
+
   page += "</body></html>";
   server.send(200, "text/html", page);
 }
@@ -170,6 +192,12 @@ void handleRoot() {
 void handleGPS() {
   String jsonData = getGPSData();
   server.send(200, "application/json", jsonData);
+}
+
+// Handler to toggle WiFi
+void handleToggleWiFi() {
+  WiFi.softAPdisconnect(true);
+  server.send(200, "text/plain", "WiFi disconnected");
 }
 
 void setup() {
@@ -190,10 +218,12 @@ void setup() {
     for(;;);
   }
   display.clearDisplay();
-  display.setTextSize(2);
+  display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
-  display.println(F("Searching for GPS ... Can take >1min. IP will be 192.168.4.1"));
+  display.println(F("Obtaining GPS.. Setup via wifi on 192.168.4.1"));
+  display.println(F("Setup via wifi on"));
+  display.println(F("192.168.4.1"));
   display.display();
   delay(2000);
 
@@ -206,8 +236,9 @@ void setup() {
   server.on("/gps", HTTP_GET, handleGPS);
   server.on("/updateHome", HTTP_GET, handleUpdateHome);
   server.on("/saveHome", HTTP_POST, handleSaveHome);
+  // Add route to handle WiFi toggle
+  server.on("/toggleWiFi", HTTP_GET, handleToggleWiFi);
   server.begin();
-
 }
 
 void loop() {
@@ -238,19 +269,27 @@ void loop() {
 
     // Update OLED display based on timer
     unsigned long currentTime = millis();
-    if (currentTime - lastSwitchTime > 20000) {
-      showDistance = !showDistance;
-      lastSwitchTime = currentTime;
+    if (showDistance) {
+      if (currentTime - lastSwitchTime > 20000) { // Show distance for 20 seconds
+        showDistance = false;
+        lastSwitchTime = currentTime;
+      }
+    } else {
+      if (currentTime - lastSwitchTime > 5000) { // Show latitude and longitude for 5 seconds
+        showDistance = true;
+        lastSwitchTime = currentTime;
+      }
     }
 
     display.clearDisplay();
     if (showDistance) {
-      display.setTextSize(2); // Adjusted text size
-      display.setCursor(0, 0); // Adjust cursor position
-      display.print((int)distanceToHome); // Display distance as an integer
+      display.setTextSize(2);
+      display.setCursor(0, 0);
+      display.print((int)distanceToHome);
       display.print(" m");
-      display.setTextSize(1); // Smaller text for direction
-      display.setCursor(0, 25); // Adjust cursor for direction
+      display.setTextSize(1);
+      display.setCursor(0, 25);
+      display.print("To the ");
       display.print(direction);
     } else {
       display.setTextSize(1);
@@ -267,3 +306,4 @@ void loop() {
     display.display();
   }
 }
+
