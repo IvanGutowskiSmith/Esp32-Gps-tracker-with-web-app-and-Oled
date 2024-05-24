@@ -30,9 +30,6 @@ TinyGPSPlus gps;
 
 WebServer server(80);
 
-unsigned long lastSwitchTime = 0;
-bool showDistance = true;
-
 double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
   double R = 6371000;
   double phi1 = lat1 * (M_PI / 180);
@@ -127,6 +124,23 @@ void handleSaveHome() {
   }
 }
 
+void handleSetCurrentAsHome() {
+  if (gps.location.isValid()) {
+    homeLatitude = gps.location.lat();
+    homeLongitude = gps.location.lng();
+    saveDoubleToEEPROM(EEPROM_LATITUDE_ADDR, homeLatitude);
+    saveDoubleToEEPROM(EEPROM_LONGITUDE_ADDR, homeLongitude);
+    server.send(200, "text/html", "<html><body><h1>Current location set as home!</h1></body></html>");
+  } else {
+    server.send(400, "text/html", "<html><body><h1>GPS location is not valid!</h1></body></html>");
+  }
+}
+
+void handleDisableWiFi() {
+  server.send(200, "text/html", "<html><body><h1>WiFi will be disabled</h1></body></html>");
+  WiFi.softAPdisconnect(true);
+}
+
 String getGPSData() {
   DynamicJsonDocument doc(200);
 
@@ -157,17 +171,33 @@ void handleRoot() {
   page += "Hi there! I'm a lost space potato; please use the distance readout to carry me back home. Thank you, kind soul!</p>";
   page += "<div id=\"gpsData\"></div>";
 
-  // Add button to toggle WiFi
-  page += "<button onclick=\"toggleWiFi()\">Toggle WiFi</button>";
+  // Add button to set current location as home
+  page += "<button onclick=\"setCurrentAsHome()\">Set Current Location as Home</button>";
 
-  // JavaScript function to toggle WiFi
+  // Add button to disable WiFi
+  page += "<button onclick=\"disableWiFi()\">Disable WiFi</button>";
+
+  // JavaScript to set current location as home
   page += "<script>";
-  page += "function toggleWiFi() {";
-  page += "fetch('/toggleWiFi').then(response => {";
+  page += "function setCurrentAsHome() {";
+  page += "fetch('/setCurrentAsHome').then(response => {";
   page += "if (response.ok) {";
-  page += "console.log('WiFi toggled successfully');";
+  page += "console.log('Current location set as home successfully');";
   page += "} else {";
-  page += "console.error('Error toggling WiFi');";
+  page += "console.error('Error setting current location as home');";
+  page += "}";
+  page += "});";
+  page += "}";
+  page += "</script>";
+
+  // JavaScript to disable WiFi
+  page += "<script>";
+  page += "function disableWiFi() {";
+  page += "fetch('/disableWiFi').then(response => {";
+  page += "if (response.ok) {";
+  page += "console.log('WiFi disabled successfully');";
+  page += "} else {";
+  page += "console.error('Error disabling WiFi');";
   page += "}";
   page += "});";
   page += "}";
@@ -178,11 +208,10 @@ void handleRoot() {
   page += "function updateGPSData() {";
   page += "fetch('/gps').then(response => response.json()).then(data => {";
   page += "const gpsDataDiv = document.getElementById('gpsData');";
-  page += "gpsDataDiv.innerHTML = `<p><b>Distance to Home:</b><br>${Math.round(data.gps.distanceToHome)} meters</p><p><b>Direction between current GPS location and home:</b> ${data.gps.direction}</p>Current latitude:<br>${data.gps.latitude}</p><p>Current longitude:<br>${data.gps.longitude}</p><p>Satellites: ${data.gps.satellites}</p>`;";
-  page += "});";
+  page += "gpsDataDiv.innerHTML = `Latitude: ${data.gps.latitude.toFixed(6)}<br>Longitude: ${data.gps.longitude.toFixed(6)}<br>Satellites: ${data.gps.satellites}<br>Distance to Home: ${data.gps.distanceToHome.toFixed(2)} m<br>Direction: ${data.gps.direction}`;";
+  page += "}).catch(error => console.error('Error fetching GPS data:', error));";
   page += "}";
-  page += "setInterval(updateGPSData, 2000);";
-  page += "window.onload = function() {updateGPSData();};";
+  page += "setInterval(updateGPSData, 1000);"; // Update every second
   page += "</script>";
 
   page += "</body></html>";
@@ -192,12 +221,6 @@ void handleRoot() {
 void handleGPS() {
   String jsonData = getGPSData();
   server.send(200, "application/json", jsonData);
-}
-
-// Handler to toggle WiFi
-void handleToggleWiFi() {
-  WiFi.softAPdisconnect(true);
-  server.send(200, "text/plain", "WiFi disconnected");
 }
 
 void setup() {
@@ -236,8 +259,8 @@ void setup() {
   server.on("/gps", HTTP_GET, handleGPS);
   server.on("/updateHome", HTTP_GET, handleUpdateHome);
   server.on("/saveHome", HTTP_POST, handleSaveHome);
-  // Add route to handle WiFi toggle
-  server.on("/toggleWiFi", HTTP_GET, handleToggleWiFi);
+  server.on("/setCurrentAsHome", HTTP_GET, handleSetCurrentAsHome);
+  server.on("/disableWiFi", HTTP_GET, handleDisableWiFi);  // Handle disable WiFi request
   server.begin();
 }
 
@@ -250,7 +273,7 @@ void loop() {
     gps.encode(ss.read());
   }
 
-  // Debugging GPS data
+  // Update OLED display with distance and direction
   if (gps.location.isUpdated()) {
     double distanceToHome = calculateDistance(gps.location.lat(), gps.location.lng(), homeLatitude, homeLongitude);
     double bearing = calculateBearing(gps.location.lat(), gps.location.lng(), homeLatitude, homeLongitude);
@@ -267,43 +290,15 @@ void loop() {
     Serial.print("Direction: ");
     Serial.println(direction);
 
-    // Update OLED display based on timer
-    unsigned long currentTime = millis();
-    if (showDistance) {
-      if (currentTime - lastSwitchTime > 20000) { // Show distance for 20 seconds
-        showDistance = false;
-        lastSwitchTime = currentTime;
-      }
-    } else {
-      if (currentTime - lastSwitchTime > 5000) { // Show latitude and longitude for 5 seconds
-        showDistance = true;
-        lastSwitchTime = currentTime;
-      }
-    }
-
     display.clearDisplay();
-    if (showDistance) {
-      display.setTextSize(2);
-      display.setCursor(0, 0);
-      display.print((int)distanceToHome);
-      display.print(" m");
-      display.setTextSize(1);
-      display.setCursor(0, 25);
-      display.print("To the ");
-      display.print(direction);
-    } else {
-      display.setTextSize(1);
-      display.setCursor(0, 0);
-      display.print("Lat: ");
-      display.println(gps.location.lat(), 6);
-      display.print("Lon: ");
-      display.println(gps.location.lng(), 6);
-      display.print("Home Lat: ");
-      display.println(homeLatitude, 6);
-      display.print("Home Lon: ");
-      display.println(homeLongitude, 6);
-    }
+    display.setTextSize(2);
+    display.setCursor(0, 0);
+    display.print((int)distanceToHome);
+    display.print(" m");
+    display.setTextSize(1);
+    display.setCursor(0, 25);
+    display.print("To the ");
+    display.print(direction);
     display.display();
   }
 }
-
